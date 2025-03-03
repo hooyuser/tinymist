@@ -68,18 +68,22 @@ impl UserActionTask {
                     stop_rx.wait_for(|stopped| *stopped).await.ok();
                     typst_timing::disable();
 
-                    // let mut writer = std::io::BufWriter::new(Vec::new());
-                    // let _ = typst_timing::export_json(&mut writer, |span| {
-                    //     resolve_span(w, Span::from_raw(span)).unwrap_or_else(|| ("unknown".to_string(), 0))
-                    // });
-                    //
-                    // let timings = writer.into_inner().unwrap();
+                    let mut writer = std::io::BufWriter::new(Vec::new());
+                    let _ = typst_timing::export_json(&mut writer, |_| {
+                        ("unknown".to_string(), 0)
+                    });
 
+                    let timings = writer.into_inner().unwrap();
+
+                    // let timings_debug = serde_json::from_slice::<serde_json::Value>(&timings).unwrap();
+                    // log::info!("timings: {:?}", timings_debug);
+                    
+                    timings
                     // Return data after receiving the stop signal
-                    serde_json::to_vec(&json!([
-                        {"timestamp": 1, "name": "event1"},
-                        {"timestamp": 2, "name": "event2"},
-                    ])).unwrap()
+                    // serde_json::to_vec(&json!([
+                    //     {"timestamp": 1, "name": "event1"},
+                    //     {"timestamp": 2, "name": "event2"},
+                    // ])).unwrap()
                 }.await;
 
                 log::info!("after generate timings");
