@@ -127,7 +127,7 @@ impl UserActionTask {
 
                 resp_tx
                     .send(Ok(json!({
-                        "tracingUrl": format!("http://{addr}"),  // send attr to stop message directly
+                        "tracingUrl": format!("http://{addr}"),  // send attr to stopServerProfiling message processor directly
                     })))
                     .ok()
                     .log_error("failed to send response");
