@@ -45,8 +45,6 @@ impl UserActionTask {
 
     /// Traces the entire server.
     pub fn trace_server(&self) -> (ServerTraceTask, SchedulableResponse<JsonValue>) {
-        //let (stop_tx, stop_rx) = oneshot::channel();
-
         let (stop_tx, mut stop_rx) = watch::channel(false);
         let mut stop_rx2 = stop_rx.clone();
 
@@ -58,9 +56,7 @@ impl UserActionTask {
         let resp = just_future(async move {
             let (addr_tx, addr_rx) = tokio::sync::oneshot::channel();
             let t = tokio::spawn(async move {
-                // todo: disable timing
 
-                // todo: take all event and prepare data
                 log::info!("before generate timings");
 
                 let timings = async {
@@ -69,6 +65,7 @@ impl UserActionTask {
                     typst_timing::disable();
 
                     let mut writer = std::io::BufWriter::new(Vec::new());
+                    // todo: resolve span correctly
                     let _ = typst_timing::export_json(&mut writer, |_| {
                         ("unknown".to_string(), 0)
                     });
@@ -77,18 +74,13 @@ impl UserActionTask {
 
                     // let timings_debug = serde_json::from_slice::<serde_json::Value>(&timings).unwrap();
                     // log::info!("timings: {:?}", timings_debug);
-                    
+
                     timings
-                    // Return data after receiving the stop signal
-                    // serde_json::to_vec(&json!([
-                    //     {"timestamp": 1, "name": "event1"},
-                    //     {"timestamp": 2, "name": "event2"},
-                    // ])).unwrap()
+
                 }.await;
 
                 log::info!("after generate timings");
                 //log::info!("timings: {:?}", timings);
-
 
                 // let _ = resp_tx;
                 // let res = serde_json::to_value(TraceReport {
@@ -107,6 +99,8 @@ impl UserActionTask {
                 log::error!("failed to get address of trace server: {err:?}");
                 internal_error("failed to get address of trace server")
             })?;
+            
+            log::info!("trace server has started at {addr}");
 
             tokio::spawn(async move {
 
@@ -116,31 +110,31 @@ impl UserActionTask {
                         Ok(a)
                     },
                     b = t => {
-                        log::info!("trace server task stopped");
+                        log::info!("trace server task stopped by timeout");
                         Err(b)
                     },
                 };
 
                 match selected {
                     Ok(Err(err)) => {
-                        log::error!("trace server task stopped by user: {err:?}");
+                        log::error!("Error occurs when trace server task stopped by user: {err:?}");
                     }
                     Err(Err(err)) => {
-                        log::error!("trace server task stopped by timeout: {err:?}");
+                        log::error!("occurs when trace server task stopped by timeout: {err:?}");
                     }
                     Ok(Ok(_)) | Err(Ok(_)) => {}
                 };
 
                 resp_tx
                     .send(Ok(json!({
-                        "tracingUrl": format!("http://{addr}"),
+                        "tracingUrl": format!("http://{addr}"),  // send attr to stop message directly
                     })))
                     .ok()
                     .log_error("failed to send response");
             });
 
             Ok(serde_json::json!({
-                "tracingUrl": format!("http://{addr}"),
+                "tracingUrl": format!("http://{addr}"),  // not used
             }))
         });
 

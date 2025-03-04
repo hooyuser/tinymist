@@ -202,67 +202,6 @@ function openPerfettoViewer(traceData) {
       </script>
     </body>
     </html>`;
-
-
-  //   <!DOCTYPE html>
-  //   <html>
-  //   <head>
-  //     <title>Perfetto Trace Viewer</title>
-  //     <style>
-  //       body, html {
-  //         margin: 0;
-  //         padding: 0;
-  //         height: 100vh;
-  //         overflow: hidden;
-  //       }
-  //       iframe {
-  //         width: 100%;
-  //         height: 100%;
-  //         border: none;
-  //       }
-  //       #loading {
-  //         position: absolute;
-  //         top: 50%;
-  //         left: 50%;
-  //         transform: translate(-50%, -50%);
-  //         font-size: 16px;
-  //         font-family: sans-serif;
-  //       }
-  //     </style>
-  //   </head>
-  //   <body>
-  //     <div id="loading">Loading Perfetto UI...</div>
-  //     <iframe id="perfettoFrame" src="https://ui.perfetto.dev/"></iframe>
-  //     <script>
-  //       const vscode = acquireVsCodeApi();
-  //       const perfettoFrame = document.getElementById('perfettoFrame');
-  //       const loadingIndicator = document.getElementById('loading');
-        
-  //       // Wait for iframe to load
-  //       perfettoFrame.onload = () => {
-  //         try {
-  //           // Send trace data to Perfetto UI when iframe is ready
-  //           setTimeout(() => {
-  //             perfettoFrame.contentWindow.postMessage({
-  //               message: 'perfetto.saveTrace',
-  //               buffer: new TextEncoder().encode(JSON.stringify(${JSON.stringify(traceData)})).buffer,
-  //               filename: 'vscode-extension-trace.json'
-  //             }, "https://ui.perfetto.dev");
-              
-  //             loadingIndicator.textContent = "Trace data loaded";
-  //             setTimeout(() => {
-  //               loadingIndicator.style.display = 'none';
-  //             }, 1000);
-  //           }, 1000); // Give Perfetto UI time to initialize
-  //         } catch (err) {
-  //           loadingIndicator.textContent = "Error loading trace: " + err.message;
-  //           console.error('Error sending trace data:', err);
-  //         }
-  //       };
-  //     </script>
-  //   </body>
-  //   </html>
-  // `;
 }
 
 export async function editorToolAt(
@@ -439,6 +378,7 @@ export async function editorToolAt(
       case "stopServerProfiling": {
         console.log("Stopping server profiling...");
         const resp = await vscode.commands.executeCommand("tinymist.stopServerProfiling") as { tracingUrl?: string };
+        // url is sent to stopServerProfiling directly
 
         // Check if tracingUrl exists in the response
         if (resp && resp.tracingUrl) {
@@ -475,15 +415,6 @@ export async function editorToolAt(
               console.log('Trace data preview (first 20 entries):', 
                 traceData.slice(0, 20));
               console.log(`Total entries: ${traceData.length}`);
-            } else if (typeof traceData === 'object') {
-              console.log('Trace data is object');
-              console.log('Trace data keys:', Object.keys(traceData));
-              // // If there's a traceEvents property (common in Chromium trace format)
-              // if (traceData.traceEvents && Array.isArray(traceData.traceEvents)) {
-              //   console.log('First 20 trace events:', 
-              //     traceData.traceEvents.slice(0, 20));
-              //   console.log(`Total trace events: ${traceData.traceEvents.length}`);
-              // }
             } else {
               console.log('Trace data type:', typeof traceData);
             }
@@ -501,64 +432,6 @@ export async function editorToolAt(
         }
         break;
       }
-      // case "didStopServerProfiling": {
-      //   console.log("Server profiling stopped.");
-      //   let traceData = message.data;
-        
-      //   // Create a webview panel for the Perfetto UI
-      //   const perfettoPanel = vscode.window.createWebviewPanel(
-      //     'perfettoViewer',
-      //     'Perfetto Trace Viewer',
-      //     vscode.ViewColumn.One,
-      //     {
-      //       enableScripts: true,
-      //       retainContextWhenHidden: true
-      //     }
-      //   );
-        
-      //   // HTML content for the Perfetto viewer iframe
-      //   perfettoPanel.webview.html = `
-      //     <!DOCTYPE html>
-      //     <html>
-      //     <head>
-      //       <title>Perfetto Trace Viewer</title>
-      //       <style>
-      //         body, html {
-      //           margin: 0;
-      //           padding: 0;
-      //           height: 100vh;
-      //           overflow: hidden;
-      //         }
-      //         iframe {
-      //           width: 100%;
-      //           height: 100%;
-      //           border: none;
-      //         }
-      //       </style>
-      //     </head>
-      //     <body>
-      //       <iframe id="perfettoFrame" src="https://ui.perfetto.dev/"></iframe>
-      //       <script>
-      //         const vscode = acquireVsCodeApi();
-      //         const perfettoFrame = document.getElementById('perfettoFrame');
-              
-      //         // Wait for iframe to load before sending trace data
-      //         perfettoFrame.onload = () => {
-      //           // Send the trace data to Perfetto UI
-      //           const traceData = ${JSON.stringify(traceData)};
-      //           perfettoFrame.contentWindow.postMessage({
-      //             message: 'perfetto.saveTrace',
-      //             buffer: new TextEncoder().encode(JSON.stringify(traceData)).buffer,
-      //             filename: 'vscode-extension-trace.json'
-      //           }, "https://ui.perfetto.dev");
-      //         };
-      //       </script>
-      //     </body>
-      //     </html>
-      //   `;
-        
-      //   break;
-      // }
       default: {
         console.error("Unknown message type", message.type);
         break;
@@ -619,7 +492,7 @@ export async function editorToolAt(
           panel.webview.postMessage({ type: "didStartServerProfiling", data: resp });
           // print the response
           console.log("Here is the response of startServerProfiling: ", resp);
-         
+          // resp is not used
         }
       };
 
