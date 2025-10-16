@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Minimal Fit‑Width PDF Viewer (Fake PDF)</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --fg: #e8ecf3;
+      --muted: #9aa4b2;
+      --panel: #121a33;
+      --accent: #5aa8ff;
+      --page-bg: #fff;
+      --page-shadow: rgba(0, 0, 0, .15);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      height: 100%;
+      width: 100%;
+      overflow: hidden;
+    }
+
+    body {
+      margin: 0;
+      font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
+      color: var(--fg);
+      background: linear-gradient(180deg, #0b1020, #0e1530);
+    }
+
+    .app {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      height: 100vh;
+      width: 100%;
+    }
+
+    header.toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      backdrop-filter: blur(8px);
+      background: color-mix(in oklab, var(--panel) 92%, transparent);
+      border-bottom: 1px solid rgba(255, 255, 255, .08);
+      padding: 12px 16px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      align-items: center;
+    }
+
+    .controls label {
+      color: var(--muted);
+      font-weight: 600;
+      letter-spacing: .02em;
+    }
+
+    .field {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      background: rgba(255, 255, 255, .04);
+      border: 1px solid rgba(255, 255, 255, .07);
+      border-radius: 12px;
+    }
+
+    .field input {
+      width: 88px;
+      padding: 6px 8px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, .14);
+      background: #0f1834;
+      color: var(--fg);
+    }
+
+    .field input[type="number"]::-webkit-outer-spin-button,
+    .field input[type="number"]::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+
+    .btn {
+      appearance: none;
+      background: var(--accent);
+      color: #00122b;
+      border: none;
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-weight: 700;
+      box-shadow: 0 6px 18px rgba(90, 168, 255, .25);
+      cursor: pointer;
+    }
+
+    .meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    /* Viewer layout */
+    .workarea {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .viewer-shell {
+      display: grid;
+      grid-template-columns: minmax(130px, 1800px);
+      justify-content: center;
+      padding: 6px 10px 20px;
+      grid-auto-rows: minmax(0, 1fr);
+    }
+
+    /* Resizable wrapper and handles */
+    .resizable {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      min-height: 0;
+      min-width: 130px;
+      max-width: 1800px;
+      margin: 0 auto;
+    }
+
+    .resizable .resize-handle {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 12px;
+      opacity: .001;
+      /* invisible but hit-testable */
+    }
+
+    .resizable .resize-handle.left {
+      left: -6px;
+      cursor: ew-resize;
+    }
+
+    .resizable .resize-handle.right {
+      right: -6px;
+      cursor: ew-resize;
+    }
+
+    .viewer-container {
+      grid-column: 1 / -1;
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      scrollbar-gutter: stable both-edges;
+      overscroll-behavior: contain;
+      background: radial-gradient(1200px 600px at 50% -5%, #1a2448 0%, transparent 60%);
+      border: 1px solid rgba(255, 255, 255, .06);
+      border-radius: 16px;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .02), 0 30px 60px rgba(0, 0, 0, .28);
+      scrollbar-width: thin;
+      scrollbar-color: color-mix(in oklab, var(--accent) 70%, transparent) rgba(12, 18, 36, .55);
+      padding-block-start: 4px;
+
+    }
+
+    .viewer-container::-webkit-scrollbar {
+      width: 12px;
+    }
+
+    .viewer-container::-webkit-scrollbar-track {
+      background: color-mix(in oklab, var(--panel) 70%, transparent);
+      border-radius: 16px;
+    }
+
+    .viewer-container::-webkit-scrollbar-thumb {
+      background: color-mix(in oklab, var(--accent) 70%, transparent);
+      border: 3px solid transparent;
+      border-radius: 999px;
+      background-clip: padding-box;
+      box-shadow: 0 3px 12px rgba(90, 168, 255, .35);
+    }
+
+    .viewer-container::-webkit-scrollbar-thumb:hover {
+      background: color-mix(in oklab, var(--accent) 85%, transparent);
+      box-shadow: 0 4px 14px rgba(90, 168, 255, .45);
+    }
+
+    .viewer {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 0px 0 8px;
+    }
+
+    .page {
+      position: relative;
+      background: var(--page-bg);
+      border-radius: 6px;
+      box-shadow: 0 16px 30px var(--page-shadow);
+      overflow: hidden;
+      /* height + width are set via JS based on scale */
+      /* vertical gap between pages is scaled in JS so scroll anchoring remains correct */
+    }
+
+    .page .viewport {
+      position: absolute;
+      left: 0;
+      top: 0;
+      transform-origin: 0 0;
+      /* scale from top-left */
+      /* width/height are BASE (unscaled) page size in px, set via JS */
+    }
+
+    canvas.sheet {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .text-layer {
+      position: absolute;
+      left: 0;
+      top: 0;
+      pointer-events: none;
+      font: 13px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: #121212;
+      mix-blend-mode: multiply;
+      opacity: .93;
+    }
+
+    .text-line {
+      position: absolute;
+      white-space: pre;
+    }
+
+    .page-number {
+      position: absolute;
+      right: 4px;
+      bottom: 4px;
+      padding: 4px 10px;
+      background: rgba(0, 0, 0, .06);
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 12px;
+      color: #344054;
+    }
+
+    .kbd {
+      font: 12px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: rgba(255, 255, 255, .08);
+      border: 1px solid rgba(255, 255, 255, .16);
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+
+    /* ensure grid child can shrink and own scrollbars */
+    .viewer-shell {
+      height: 100%;
+      min-height: 0;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="app">
+    <header class="toolbar">
+      <div class="controls">
+        <div class="field"><label for="w">Page W</label><input id="w" type="number" min="200" step="10" value="600" />px
+        </div>
+        <div class="field"><label for="h">Page H</label><input id="h" type="number" min="300" step="10" value="800" />px
+        </div>
+        <div class="field"><label for="n">Pages</label><input id="n" type="number" min="1" step="1" value="15" /></div>
+        <button id="apply" class="btn" title="Rebuild fake PDF with the given size and page count">Apply</button>
+        <button id="resetScale" class="btn" type="button" title="Reset zoom to 1:1">Reset Scale</button>
+        <span class="hint">Drag the <strong>left or right edge</strong> of the viewer to resize the container (Fit‑Width
+          auto‑reflows).</span>
+      </div>
+      <div class="meta">
+        <div>Mode: <strong>Fit Width</strong></div>
+        <div>Scale: <span id="scaleLabel">1.00</span>x</div>
+        <div>Container W: <span id="cw">—</span> px</div>
+      </div>
+    </header>
+
+    <section class="workarea">
+      <div class="viewer-shell">
+        <div id="resizable" class="resizable">
+          <div class="resize-handle left" data-dir="left" aria-label="Resize left handle"></div>
+          <div id="viewerContainer" class="viewer-container" aria-label="Fake PDF viewer" tabindex="0">
+            <div id="viewer" class="viewer" role="document"></div>
+          </div>
+          <div class="resize-handle right" data-dir="right" aria-label="Resize right handle"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    /**
+     * Minimal Fit‑Width viewer using a FAKE PDF (canvas + absolutely positioned text layer)
+     *
+     * Goals:
+     *  - Implement the PDF.js-style "page-width" named zoom.
+     *  - Use ResizeObserver to recompute scale when the container width changes.
+     *  - Preserve scroll anchor (top-left) across resizes via content-space math.
+     *  - Provide inputs to set base page width/height and page count.
+     *
+     * Model:
+     *  - Base (unscaled) page size is specified in CSS pixels (W,H).
+     *  - Current scale S = containerClientWidth / basePageWidth.
+     *  - The document’s vertical layout (page heights + gaps) scales with S.
+     *  - Scroll anchoring: contentY = scrollTop / previousS; newScrollTop = contentY * newS.
+     */
+
+    const $ = sel => document.querySelector(sel);
+    const viewerContainer = $('#viewerContainer');
+    const viewer = $('#viewer');
+    const resizable = $('#resizable');
+
+    const wInput = $('#w');
+    const hInput = $('#h');
+    const nInput = $('#n');
+    const applyBtn = $('#apply');
+    const resetBtn = $('#resetScale');
+    const scaleLabel = $('#scaleLabel');
+    const cwLabel = $('#cw');
+
+    const state = {
+      baseW: 600,
+      baseH: 800,
+      pages: 15,
+      baseGap: 12,    // gap between pages at scale=1 (in CSS px)
+      scale: 1,
+    };
+    const FIRST_PAGE_GAP_FACTOR = 0.1;
+    const BADGE_BASE = {
+      fontSize: 12,
+      paddingY: 4,
+      paddingX: 10,
+      inset: 18,
+    };
+
+    function stylePageBadge(badgeEl) {
+      if (!badgeEl) return;
+      const s = state.scale;
+      badgeEl.style.fontSize = (BADGE_BASE.fontSize * s) + 'px';
+      badgeEl.style.padding = `${BADGE_BASE.paddingY * s}px ${BADGE_BASE.paddingX * s}px`;
+      const inset = Math.max(6, BADGE_BASE.inset * s);
+      badgeEl.style.right = inset + 'px';
+      badgeEl.style.bottom = inset + 'px';
+    }
+
+    // Build (or rebuild) the fake PDF pages.
+    function buildDocument() {
+      viewer.innerHTML = '';
+      for (let i = 0; i < state.pages; i++) {
+        const page = document.createElement('div');
+        page.className = 'page';
+
+        // Outer page takes the scaled dimensions so scrolling is correct.
+        page.style.width = (state.baseW * state.scale) + 'px';
+        page.style.height = (state.baseH * state.scale) + 'px';
+        const baseMargin = state.baseGap * state.scale;
+        const topMargin = (i === 0 ? baseMargin * FIRST_PAGE_GAP_FACTOR : baseMargin);
+        const bottomMargin = (i === state.pages - 1 ? baseMargin * FIRST_PAGE_GAP_FACTOR : baseMargin);
+        page.style.marginTop = topMargin + 'px';
+        page.style.marginBottom = bottomMargin + 'px';
+
+        const viewport = document.createElement('div');
+        viewport.className = 'viewport';
+        viewport.style.width = state.baseW + 'px';
+        viewport.style.height = state.baseH + 'px';
+        viewport.style.transform = `scale(${state.scale})`;
+
+        // Canvas "bitmap" layer.
+        const canvas = document.createElement('canvas');
+        canvas.className = 'sheet';
+        // Keep canvas at base CSS size; we’ll scale via CSS transform for speed.
+        canvas.width = state.baseW;  // drawing buffer
+        canvas.height = state.baseH;
+        canvas.style.width = state.baseW + 'px';
+        canvas.style.height = state.baseH + 'px';
+
+        drawFakePage(canvas, i + 1);
+
+        // Text layer (positioned in BASE coords; scaled by parent transform)
+        const textLayer = document.createElement('div');
+        textLayer.className = 'text-layer';
+        textLayer.style.width = state.baseW + 'px';
+        textLayer.style.height = state.baseH + 'px';
+        seedTextLayer(textLayer);
+
+        // Page number badge
+        const badge = document.createElement('div');
+        badge.className = 'page-number';
+        badge.textContent = i + 1;
+        stylePageBadge(badge);
+
+        viewport.appendChild(canvas);
+        viewport.appendChild(textLayer);
+        page.appendChild(viewport);
+        page.appendChild(badge);
+        viewer.appendChild(page);
+      }
+    }
+
+    // Draws simple content to make visual anchoring obvious.
+    function drawFakePage(canvas, pageIndex) {
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width, H = canvas.height;
+      // backdrop
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, W, H);
+      // header bar
+      ctx.fillStyle = '#e9eef7';
+      ctx.fillRect(0, 0, W, 54);
+      ctx.fillStyle = '#20304d';
+      ctx.font = 'bold 16px ui-sans-serif, system-ui';
+      ctx.fillText(`Fake PDF — Top Line (Page ${pageIndex})`, 18, 32);
+
+      // ruled lines
+      ctx.strokeStyle = '#d7dbe0';
+      ctx.lineWidth = 1;
+      for (let y = 70; y < H - 40; y += 26) {
+        ctx.beginPath();
+        ctx.moveTo(16, y);
+        ctx.lineTo(W - 16, y);
+        ctx.stroke();
+      }
+      // left margin
+      ctx.strokeStyle = '#dae0ea';
+      ctx.beginPath();
+      ctx.moveTo(72, 60);
+      ctx.lineTo(72, H - 32);
+      ctx.stroke();
+
+      // footer
+      ctx.fillStyle = '#f4f6fb';
+      ctx.fillRect(0, H - 36, W, 36);
+    }
+
+    function seedTextLayer(layerEl) {
+      // Add a few absolutely positioned lines in BASE coords
+      const lines = [
+        { x: 84, y: 100, text: 'This is fake selectable text aligned via CSS transform.' },
+        { x: 84, y: 126, text: 'Resize the container — anchoring preserves the visible content.' },
+        { x: 84, y: 152, text: 'Scale is recomputed as containerWidth / basePageWidth.' },
+        { x: 84, y: 178, text: 'The vertical layout (page height + gaps) scales with the zoom.' },
+        { x: 84, y: 204, text: 'This is not a real PDF viewer.' },
+        { x: 84, y: 230, text: 'Try selecting this text. It is not real PDF text, just a demo.' },
+        { x: 84, y: 256, text: 'The text layer is absolutely positioned over the canvas.' },
+        { x: 84, y: 282, text: 'The text is not selectable when it goes outside the page bounds.' },
+        { x: 84, y: 308, text: 'This demo uses ResizeObserver to detect container width changes.' },
+        { x: 84, y: 334, text: 'Scroll anchoring math preserves the top-left content on resize.' },
+        { x: 84, y: 360, text: 'The canvas is scaled via CSS transform for speed.' },
+        { x: 84, y: 386, text: 'The canvas drawing buffer remains at the base size.' },
+        { x: 84, y: 412, text: 'This is a demo only; it is not a real PDF viewer.' },
+        { x: 84, y: 438, text: 'Resize the container horizontally to see Fit Width in action.' },
+        { x: 84, y: 464, text: 'The page gap is scaled so scroll position remains anchored.' },
+        { x: 84, y: 490, text: 'The top margin is smaller on the first page for aesthetics.' },
+        { x: 84, y: 516, text: 'The bottom margin is smaller on the last page for aesthetics.' },
+        { x: 84, y: 542, text: 'This is a demo of Fit Width zooming.' },
+      ];
+      for (const { x, y, text } of lines) {
+        const span = document.createElement('div');
+        span.className = 'text-line';
+        span.style.left = x + 'px';
+        span.style.top = y + 'px';
+        span.textContent = text;
+        layerEl.appendChild(span);
+      }
+    }
+
+    function getPageBorderX() {
+      const sample = viewer.querySelector('.page');
+      if (!sample) return 0;
+      const cs = getComputedStyle(sample);
+      return (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.borderRightWidth) || 0);
+    }
+
+    function computeFitWidthScale() {
+      const containerW = viewerContainer.clientWidth; // excludes scrollbars, includes padding
+      const borderX = getPageBorderX();
+      const available = Math.max(0, containerW - borderX);
+      const s = Math.max(0.1, available / state.baseW);
+      cwLabel.textContent = String(Math.round(containerW));
+      return s;
+    }
+
+    function syncScaleToContainerWidth() {
+      const newS = computeFitWidthScale();
+      applyScale(newS);
+    }
+
+    function fixedTopOffset() {
+        const vc = getComputedStyle(viewerContainer);
+        const v  = getComputedStyle(viewer);
+        const vcPadTop = parseFloat(vc.paddingTop) || 0; // 4px
+        const vPadTop  = parseFloat(v.paddingTop)  || 0; // 6px
+        // If you ever add borders/headers inside the scrollport that don’t scale,
+        // include them here too.
+        return vcPadTop + vPadTop;
+    }
+
+    function applyScale(newScale) {
+      const prev = state.scale;
+      if (!isFinite(newScale) || newScale <= 0) return;
+
+      // Preserve top-left content, excluding fixed (unscaled) offsets
+      const off = fixedTopOffset();
+      const contentY = (viewerContainer.scrollTop - off) / prev;
+
+      state.scale = newScale;
+      scaleLabel.textContent = newScale.toFixed(2);
+      cwLabel.textContent = String(Math.round(viewerContainer.clientWidth));
+
+      const pages = viewer.querySelectorAll('.page');
+      const baseMargin = state.baseGap * state.scale;
+      pages.forEach((page, index) => {
+        page.style.width = (state.baseW * state.scale) + 'px';
+        page.style.height = (state.baseH * state.scale) + 'px';
+        const topMargin = (index === 0 ? baseMargin * FIRST_PAGE_GAP_FACTOR : baseMargin);
+        const bottomMargin = (index === pages.length - 1 ? baseMargin * FIRST_PAGE_GAP_FACTOR : baseMargin);
+        page.style.marginTop = topMargin + 'px';
+        page.style.marginBottom = bottomMargin + 'px';
+        const viewport = page.querySelector('.viewport');
+        viewport.style.transform = `scale(${state.scale})`;
+        stylePageBadge(page.querySelector('.page-number'));
+      }); 
+
+      
+      // Re-apply anchored scroll
+      viewerContainer.scrollTop = contentY * state.scale + off;
+    }
+
+    // --- Manual left/right resizing of the container ---
+    const limits = { min: 130, max: 1800 };
+    let resizing = false, startX = 0, startW = 0, dir = 'right';
+
+    function setResizableWidth(px) {
+      const clamped = Math.min(limits.max, Math.max(limits.min, px));
+      resizable.style.width = clamped + 'px';
+    }
+
+    let pendingResetFrame = 0;
+
+    function resetScaleToOne() {
+      const borderX = getPageBorderX();
+      const resizableRect = resizable.getBoundingClientRect();
+      const containerWidth = viewerContainer.clientWidth;
+      const extra = resizableRect.width - containerWidth;
+      const targetContainerWidth = state.baseW + borderX;
+      const targetResizableWidth = targetContainerWidth + extra;
+
+      if (Math.abs(targetResizableWidth - resizableRect.width) > 0.5) {
+        setResizableWidth(targetResizableWidth);
+      }
+
+      if (pendingResetFrame) cancelAnimationFrame(pendingResetFrame);
+      pendingResetFrame = requestAnimationFrame(() => {
+        pendingResetFrame = 0;
+        syncScaleToContainerWidth();
+      });
+    }
+
+    function onPointerDown(e) {
+      dir = e.currentTarget.dataset.dir;
+      resizing = true;
+      startX = e.clientX;
+      startW = resizable.getBoundingClientRect().width;
+      e.preventDefault();
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', onPointerUp);
+    }
+
+    function onPointerMove(e) {
+      if (!resizing) return;
+      const dx = e.clientX - startX;
+      const w = dir === 'right' ? startW + dx : startW - dx;
+      setResizableWidth(w);
+    }
+
+    function onPointerUp() {
+      resizing = false;
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    }
+
+    // Initialize document and observer
+    function init() {
+      // Load initial state from inputs
+      state.baseW = clampInt(wInput.value, 200, 4000) || 600;
+      state.baseH = clampInt(hInput.value, 300, 6000) || 800;
+      state.pages = clampInt(nInput.value, 1, 999) || 15;
+
+      // Initial scale locked at 1 so the document starts at true size.
+      state.scale = 1;
+      buildDocument();
+      applyScale(state.scale);
+      cwLabel.textContent = String(Math.round(viewerContainer.clientWidth));
+
+      // Initialize resizable width and attach edge drag handlers
+      if (!resizable.style.width) {
+        setResizableWidth(resizable.getBoundingClientRect().width || 800);
+      }
+      resizable.querySelectorAll('.resize-handle').forEach(h => h.addEventListener('pointerdown', onPointerDown));
+
+      // Observe container resizes and keep Fit-Width
+      let raf = 0;
+      let skipInitialResize = true;
+      const ro = new ResizeObserver(() => {
+        cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(() => {
+          if (skipInitialResize) {
+            skipInitialResize = false;
+            cwLabel.textContent = String(Math.round(viewerContainer.clientWidth));
+            return;
+          }
+          syncScaleToContainerWidth();
+        });
+      });
+      ro.observe(viewerContainer);
+
+      // Fallback: recompute on window resize (e.g. when container max-width changes)
+      window.addEventListener('resize', syncScaleToContainerWidth);
+
+      // Rebuild document when the user clicks Apply
+      applyBtn.addEventListener('click', () => {
+        const off = fixedTopOffset();
+        keepContentY = (viewerContainer.scrollTop - off) / state.scale;
+        state.baseW = clampInt(wInput.value, 200, 4000) || 600;
+        state.baseH = clampInt(hInput.value, 300, 6000) || 800;
+        state.pages = clampInt(nInput.value, 1, 999) || 15;
+        buildDocument();
+        syncScaleToContainerWidth();
+        viewerContainer.scrollTop = keepContentY * state.scale + off;
+      });
+
+      resetBtn.addEventListener('click', resetScaleToOne);
+    }
+
+    function clampInt(v, min, max) {
+      const n = Math.round(parseFloat(v));
+      return Math.min(max, Math.max(min, n));
+    }
+
+    init();
+  </script>
+</body>
+
+</html>

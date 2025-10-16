@@ -28,9 +28,53 @@ export function provideSvgDoc<
 
     /// cursor path is a list of element point from root to leaf
     cursorPaths?: ElementPoint[][] = undefined;
+    private lastSvgScale?: number;
     setCursorPaths(paths: ElementPoint[][]) {
       this.cursorPaths = paths;
       this.addViewportChange();
+    }
+
+    private getScrollContainer(): HTMLElement | null {
+      const doc = this.hookedElem.ownerDocument;
+      if (!doc) {
+        return null;
+      }
+      const el = doc.scrollingElement || doc.documentElement || doc.body;
+      return el instanceof HTMLElement ? el : null;
+    }
+
+    private captureScrollAnchor(prevScale: number) {
+      if (!(prevScale > 0) || !Number.isFinite(prevScale)) {
+        return undefined;
+      }
+      const scrollElement = this.getScrollContainer();
+      if (!scrollElement) {
+        return undefined;
+      }
+
+      const scrollTop = scrollElement.scrollTop;
+      const viewerRect = this.hookedElem.getBoundingClientRect();
+      // clientTop removes the scrollport's border so the offset only captures padding/margins.
+      const fixedOffset = viewerRect.top + scrollTop - scrollElement.clientTop;
+      const contentY = (scrollTop - fixedOffset) / prevScale;
+      if (!Number.isFinite(contentY)) {
+        return undefined;
+      }
+
+      // Preserve the top anchor by converting scrollTop into document space, fit-to-width mode
+      return (nextScale: number) => {
+        if (!(nextScale > 0) || !Number.isFinite(nextScale)) {
+          return;
+        }
+        const newScrollTop = contentY * nextScale + fixedOffset;
+        if (!Number.isFinite(newScrollTop)) {
+          return;
+        }
+        const targetTop = newScrollTop < 0 ? 0 : newScrollTop;
+        if (Math.abs(scrollElement.scrollTop - targetTop) > 0.1) {
+          scrollElement.scrollTop = targetTop;
+        }
+      };
     }
 
     postRender$svg() {
@@ -276,11 +320,18 @@ export function provideSvgDoc<
         return;
       }
 
+      const fallbackScale = this.currentRealScale * this.currentScaleRatio;
+      const prevScale = this.lastSvgScale ?? (fallbackScale || 1);
       const scale = this.getSvgScaleRatio();
       if (scale === 0) {
         console.warn("determine scale as 0, skip rescale");
         return;
       }
+
+      const anchor =
+        this.previewMode === PreviewMode.Doc && Math.abs(scale - prevScale) > 1e-6
+          ? this.captureScrollAnchor(prevScale)
+          : undefined;
 
       // get dom state from cache, so we are free from layout reflowing
       const container = this.cachedDOMState;
@@ -300,6 +351,7 @@ export function provideSvgDoc<
         transformAttr = `translate(${widthAdjust}px, ${heightAdjust}px)`;
       } else {
         transformAttr = `translate(${widthAdjust}px, 0px)`;
+        console.log("DEBUG: transformAttr", transformAttr);
       }
       if (this.hookedElem.style.transform !== transformAttr) {
         this.hookedElem.style.transform = transformAttr;
@@ -309,6 +361,12 @@ export function provideSvgDoc<
       if (this.hookedElem.style.height) {
         this.hookedElem.style.removeProperty("height");
       }
+
+      if (anchor) {
+        anchor(scale);
+      }
+
+      this.lastSvgScale = scale;
     }
 
     private decorateSvgElement(svg: SVGElement, mode: PreviewMode) {
@@ -630,6 +688,7 @@ export function provideSvgDoc<
 
     private statSvgFromDom() {
       const { width: containerWidth, boundingRect: containerBRect } = this.cachedDOMState;
+      console.log("DEBUG: containerWidth:", containerWidth, "containerBRect:", containerBRect);
       // scale derived from svg width and container with.
       // svg.setAttribute("data-width", `${newWidth}`);
 
@@ -637,7 +696,9 @@ export function provideSvgDoc<
       // respect current scale ratio
       const revScale = computedRevScale / this.currentScaleRatio;
       const left = (window.screenLeft - containerBRect.left) * revScale;
+      console.log("DEBUG: left:", left, "screenLeft:", window.screenLeft, "containerBRect.left:", containerBRect.left, "revScale:", revScale);
       const top = (window.screenTop - containerBRect.top) * revScale;
+      console.log("DEBUG: top:", top, "screenTop:", window.screenTop, "containerBRect.top:", containerBRect.top, "revScale:", revScale);
       const width = window.innerWidth * revScale;
       const height = window.innerHeight * revScale;
 

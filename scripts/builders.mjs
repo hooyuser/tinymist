@@ -160,7 +160,8 @@ export async function buildTinymistVscodeSystem() {
 }
 
 export async function buildLspBinary(kind) {
-  await spawnAsync(`lsp:${kind}`, `cargo build -p tinymist-cli --color=always --profile=${kind}`, {
+  const profileFlag = kind === "debug" ? "" : ` --profile=${kind}`;
+  await spawnAsync(`lsp:${kind}`, `cargo build -p tinymist-cli --color=always${profileFlag}`, {
     env: {
       ...process.env,
       FORCE_COLOR: "1",
