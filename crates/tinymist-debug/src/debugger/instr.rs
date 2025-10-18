@@ -25,6 +25,7 @@ fn instrument_breakpoints(source: Source) -> FileResult<(Source, Arc<BreakpointI
     let mut worker = InstrumentWorker {
         meta: BreakpointInfo::default(),
         instrumented: String::new(),
+        block_stack: Vec::new(),
     };
 
     worker.visit_node(node);
@@ -36,6 +37,7 @@ fn instrument_breakpoints(source: Source) -> FileResult<(Source, Arc<BreakpointI
 struct InstrumentWorker {
     meta: BreakpointInfo,
     instrumented: String,
+    block_stack: Vec<usize>,
 }
 
 impl InstrumentWorker {
@@ -158,9 +160,14 @@ impl InstrumentWorker {
         }
     }
 
-    fn make_cov(&mut self, span: Span, kind: BreakpointKind) {
+    fn make_cov(&mut self, span: Span, kind: BreakpointKind) -> usize {
         let it = self.meta.meta.len();
-        self.meta.meta.push(BreakpointItem { origin_span: span });
+        self.meta.meta.push(BreakpointItem {
+            origin_span: span,
+            kind,
+            parent: self.block_stack.last().copied(),
+            counterpart: None,
+        });
         self.instrumented.push_str("if __breakpoint_");
         self.instrumented.push_str(kind.to_str());
         self.instrumented.push('(');
@@ -172,6 +179,7 @@ impl InstrumentWorker {
         self.instrumented.push_str(&it.to_string());
         self.instrumented.push_str(", (:)); ");
         self.instrumented.push_str("};\n");
+        it
     }
 
     fn instrument_block(&mut self, child: &SyntaxNode) {
@@ -189,10 +197,20 @@ impl InstrumentWorker {
 
             (first, last)
         };
-        self.make_cov(first, BreakpointKind::BlockStart);
+        let first = first.or(child.span());
+        let last = last.or(child.span());
+        let start_idx = self.make_cov(first, BreakpointKind::BlockStart);
+        self.block_stack.push(start_idx);
         self.visit_node_fallback(child);
         self.instrumented.push('\n');
-        self.make_cov(last, BreakpointKind::BlockEnd);
+        self.block_stack.pop();
+        let end_idx = self.make_cov(last, BreakpointKind::BlockEnd);
+        if let Some(item) = self.meta.meta.get_mut(start_idx) {
+            item.counterpart = Some(end_idx);
+        }
+        if let Some(item) = self.meta.meta.get_mut(end_idx) {
+            item.counterpart = Some(start_idx);
+        }
         self.instrumented.push_str("}\n");
     }
 
@@ -201,7 +219,7 @@ impl InstrumentWorker {
         let s = child.span();
         self.visit_node_fallback(child);
         self.instrumented.push_str("\n__it => {");
-        self.make_cov(s, BreakpointKind::ShowStart);
+        let _ = self.make_cov(s, BreakpointKind::ShowStart);
         self.instrumented.push_str("__bp_functor(__it); } }\n");
     }
 }
@@ -283,7 +301,7 @@ mod tests {
     #[test]
     fn test_instrument_coverage_nested() {
         let source = Source::detached("#let a = {1};");
-        let (new, _meta) = instrument_breakpoints(source).unwrap();
+        let (new, meta) = instrument_breakpoints(source).unwrap();
         insta::assert_snapshot!(new.text(), @r###"
         #let a = {
         if __breakpoint_block_start(0) {__breakpoint_block_start_handle(0, (:)); };
@@ -292,6 +310,15 @@ mod tests {
         }
         ;
         "###);
+
+        let info = meta.as_ref();
+        assert_eq!(info.meta.len(), 2);
+        assert_eq!(info.meta[0].kind, BreakpointKind::BlockStart);
+        assert_eq!(info.meta[1].kind, BreakpointKind::BlockEnd);
+        assert_eq!(info.meta[0].counterpart, Some(1));
+        assert_eq!(info.meta[1].counterpart, Some(0));
+        assert_eq!(info.meta[0].parent, None);
+        assert_eq!(info.meta[1].parent, None);
     }
 
     #[test]

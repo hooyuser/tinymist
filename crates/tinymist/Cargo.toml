@@ -75,6 +75,7 @@ typstfmt.workspace = true
 typstyle-core.workspace = true
 unicode-script.workspace = true
 walkdir.workspace = true
+tinymist-dap = { workspace = true, optional = true }
 
 http-body-util = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }
@@ -102,7 +103,7 @@ vergen.workspace = true
 cargo_metadata = "0.18.0"
 
 [features]
-dap = ["sync-ls/dap", "tinymist-debug"]
+dap = ["sync-ls/dap", "tinymist-debug", "tinymist-dap"]
 default = ["web", "no-content-hint"]
 preview = [
     "open",

@@ -211,6 +211,7 @@ tinymist-lint = { path = "./crates/tinymist-lint/", version = "0.13.28" }
 tinymist-query = { path = "./crates/tinymist-query/", version = "0.13.28" }
 tinymist-render = { path = "./crates/tinymist-render/", version = "0.13.28" }
 tinymist-preview = { path = "./crates/typst-preview", version = "0.13.28" }
+tinymist-dap = { path = "./crates/tinymist-dap/", version = "0.13.28" }
 typlite = { path = "./crates/typlite", version = "0.13.28", default-features = false }
 
 [profile.dev.package.insta]
@@ -317,6 +318,7 @@ tinymist-vfs = { path = "crates/tinymist-vfs" }
 tinymist-world = { path = "crates/tinymist-world" }
 tinymist-project = { path = "crates/tinymist-project" }
 tinymist-task = { path = "crates/tinymist-task" }
+tinymist-dap = { path = "crates/tinymist-dap" }
 
 # If reflexo use the tinymist from git, you should use the following patch.
 # [patch."https://github.com/Myriad-Dreamin/tinymist.git"]

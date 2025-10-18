@@ -76,6 +76,44 @@ impl BreakpointKind {
     }
 }
 
+/// The mode used to resume execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeMode {
+    /// Stay paused.
+    Pause,
+    /// Continue without pausing unless another breakpoint is hit.
+    Continue,
+    /// Step into the next executable region.
+    StepIn,
+    /// Step out of the current region.
+    StepOut,
+    /// Step over the current region.
+    StepOver,
+}
+
+impl Default for ResumeMode {
+    fn default() -> Self {
+        ResumeMode::Pause
+    }
+}
+
+/// Metadata describing an active breakpoint hit.
+#[derive(Debug, Clone, Copy)]
+pub struct ActiveBreakpoint {
+    /// Source file containing the breakpoint.
+    pub file_id: FileId,
+    /// Index into [`BreakpointInfo::meta`] for this breakpoint.
+    pub index: usize,
+    /// The kind of instrumentation that triggered the pause.
+    pub kind: BreakpointKind,
+    /// Span that should be highlighted for the current stop.
+    pub span: Span,
+    /// Parent block start index, if any.
+    pub parent: Option<usize>,
+    /// Matching block end/start index for paired breakpoints.
+    pub counterpart: Option<usize>,
+}
+
 #[derive(Default)]
 pub struct BreakpointInfo {
     pub meta: Vec<BreakpointItem>,
@@ -83,6 +121,9 @@ pub struct BreakpointInfo {
 
 pub struct BreakpointItem {
     pub origin_span: Span,
+    pub kind: BreakpointKind,
+    pub parent: Option<usize>,
+    pub counterpart: Option<usize>,
 }
 
 static DEBUG_SESSION: RwLock<Option<DebugSession>> = RwLock::new(None);
@@ -108,6 +149,11 @@ pub struct DebugSession {
 
     /// The handler.
     pub handler: Arc<dyn DebugSessionHandler>,
+
+    current: Option<ActiveBreakpoint>,
+    last_resume: ResumeMode,
+    stop_reason: Option<ResumeMode>,
+    auto_break: bool,
 }
 
 impl DebugSession {
@@ -117,7 +163,165 @@ impl DebugSession {
             enabled: FxHashSet::default(),
             breakpoints: FxHashMap::default(),
             handler,
+            current: None,
+            last_resume: ResumeMode::Pause,
+            stop_reason: None,
+            auto_break: false,
         }
+    }
+
+    /// Returns the currently active breakpoint, if any.
+    pub fn current(&self) -> Option<ActiveBreakpoint> {
+        self.current
+    }
+
+    /// Returns the reason of the most recent stop.
+    pub fn stop_reason(&self) -> Option<ResumeMode> {
+        self.stop_reason
+    }
+
+    /// Returns the metadata for a file.
+    pub fn breakpoint_info(&self, file_id: FileId) -> Option<&Arc<BreakpointInfo>> {
+        self.breakpoints.get(&file_id)
+    }
+
+    /// Consumes the current stop reason.
+    pub fn take_stop_reason(&mut self) -> Option<ResumeMode> {
+        self.stop_reason.take()
+    }
+
+    /// Configures the next resume action.
+    pub fn plan_resume(&mut self, mode: ResumeMode) -> bool {
+        self.last_resume = mode;
+        self.stop_reason = None;
+
+        match mode {
+            ResumeMode::Pause => {
+                self.enabled.clear();
+                false
+            }
+            ResumeMode::Continue => {
+                self.enabled.clear();
+                self.current = None;
+                true
+            }
+            ResumeMode::StepIn | ResumeMode::StepOut | ResumeMode::StepOver => {
+                let Some(active) = self.current else {
+                    self.enabled.clear();
+                    return false;
+                };
+                let Some((target_idx, kind)) = self.compute_step_target(&active, mode) else {
+                    self.enabled.clear();
+                    self.current = None;
+                    return false;
+                };
+                self.enabled.clear();
+                self.enabled.insert((active.file_id, target_idx, kind));
+                self.current = None;
+                true
+            }
+        }
+    }
+
+    /// Requests the next breakpoint to trigger regardless of enabled set.
+    pub fn request_auto_break(&mut self) {
+        self.auto_break = true;
+    }
+
+    fn compute_step_target(
+        &self,
+        active: &ActiveBreakpoint,
+        mode: ResumeMode,
+    ) -> Option<(usize, BreakpointKind)> {
+        let info = self.breakpoints.get(&active.file_id)?;
+        let target_idx = match mode {
+            ResumeMode::StepIn => Self::target_step_in(info, active),
+            ResumeMode::StepOut => Self::target_step_out(info, active),
+            ResumeMode::StepOver => Self::target_step_over(info, active),
+            ResumeMode::Pause | ResumeMode::Continue => None,
+        }?;
+        let kind = info.meta.get(target_idx)?.kind;
+        Some((target_idx, kind))
+    }
+
+    fn target_step_in(info: &BreakpointInfo, active: &ActiveBreakpoint) -> Option<usize> {
+        Self::find_first_child(info, active.index)
+            .or_else(|| Self::target_step_over(info, active))
+    }
+
+    fn target_step_out(info: &BreakpointInfo, active: &ActiveBreakpoint) -> Option<usize> {
+        if active.kind == BreakpointKind::BlockStart {
+            if let Some(idx) = info.meta.get(active.index)?.counterpart {
+                return Some(idx);
+            }
+        }
+        if let Some(parent_start) = active.parent {
+            let parent_item = info.meta.get(parent_start)?;
+            parent_item.counterpart
+        } else {
+            None
+        }
+    }
+
+    fn target_step_over(info: &BreakpointInfo, active: &ActiveBreakpoint) -> Option<usize> {
+        if active.kind == BreakpointKind::BlockStart {
+            if let Some(idx) = info.meta.get(active.index)?.counterpart {
+                return Some(idx);
+            }
+        }
+        Self::find_next_in_scope(info, active.index, active.parent)
+    }
+
+    fn find_first_child(info: &BreakpointInfo, start_idx: usize) -> Option<usize> {
+        info.meta
+            .iter()
+            .enumerate()
+            .skip(start_idx + 1)
+            .find(|(_, item)| item.parent == Some(start_idx))
+            .map(|(idx, _)| idx)
+    }
+
+    fn find_next_in_scope(
+        info: &BreakpointInfo,
+        start_idx: usize,
+        parent: Option<usize>,
+    ) -> Option<usize> {
+        info.meta
+            .iter()
+            .enumerate()
+            .skip(start_idx + 1)
+            .find(|(_, item)| item.parent == parent)
+            .map(|(idx, _)| idx)
+    }
+
+    fn should_break(&self, fid: FileId, id: usize, kind: BreakpointKind) -> bool {
+        self.auto_break || self.enabled.contains(&(fid, id, kind))
+    }
+
+    fn on_breakpoint_hit(
+        &mut self,
+        fid: FileId,
+        id: usize,
+        kind: BreakpointKind,
+    ) -> Option<ActiveBreakpoint> {
+        let info = self.breakpoints.get(&fid)?;
+        let item = info.meta.get(id)?;
+        let active = ActiveBreakpoint {
+            file_id: fid,
+            index: id,
+            kind,
+            span: item.origin_span,
+            parent: item.parent,
+            counterpart: item.counterpart,
+        };
+
+        self.current = Some(active);
+        self.stop_reason = Some(self.last_resume);
+        self.last_resume = ResumeMode::Pause;
+        self.enabled.remove(&(fid, id, kind));
+        self.auto_break = false;
+
+        Some(active)
     }
 }
 
@@ -129,11 +333,19 @@ where
     Some(f(DEBUG_SESSION.read().as_ref()?))
 }
 
+/// Runs function with mutable access to the debug session.
+pub fn with_debug_session_mut<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&mut DebugSession) -> R,
+{
+    Some(f(DEBUG_SESSION.write().as_mut()?))
+}
+
 /// Sets the debug session.
 pub fn set_debug_session(session: Option<DebugSession>) -> bool {
     let mut lock = DEBUG_SESSION.write();
 
-    if session.is_some() {
+    if session.is_some() && lock.is_some() {
         return false;
     }
 
@@ -148,8 +360,7 @@ fn check_soft_breakpoint(span: Span, id: usize, kind: BreakpointKind) -> Option<
     let session = DEBUG_SESSION.read();
     let session = session.as_ref()?;
 
-    let bp_feature = (fid, id, kind);
-    Some(session.enabled.contains(&bp_feature))
+    Some(session.should_break(fid, id, kind))
 }
 
 /// Software breakpoints
@@ -163,17 +374,16 @@ fn soft_breakpoint_handle(
 ) -> Option<()> {
     let fid = span.id()?;
 
-    let (handler, origin_span) = {
-        let session = DEBUG_SESSION.read();
-        let session = session.as_ref()?;
+    let (handler, active) = {
+        let mut session = DEBUG_SESSION.write();
+        let session = session.as_mut()?;
 
-        let bp_feature = (fid, id, kind);
-        if !session.enabled.contains(&bp_feature) {
+        if !session.should_break(fid, id, kind) {
             return None;
         }
 
-        let item = session.breakpoints.get(&fid)?.meta.get(id)?;
-        (session.handler.clone(), item.origin_span)
+        let active = session.on_breakpoint_hit(fid, id, kind)?;
+        (session.handler.clone(), active)
     };
 
     let mut scopes = Scopes::new(Some(engine.world.library()));
@@ -183,7 +393,7 @@ fn soft_breakpoint_handle(
         }
     }
 
-    handler.on_breakpoint(engine, context, scopes, origin_span, kind);
+    handler.on_breakpoint(engine, context, scopes, active.span, active.kind);
     Some(())
 }
 

@@ -4167,6 +4167,7 @@ dependencies = [
  "sync-ls",
  "temp-env",
  "tinymist-assets 0.13.28 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tinymist-dap",
  "tinymist-debug",
  "tinymist-l10n",
  "tinymist-preview",
