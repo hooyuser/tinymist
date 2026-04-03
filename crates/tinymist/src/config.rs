@@ -944,9 +944,9 @@ impl From<&dapts::InitializeRequestArguments> for ConstDapConfig {
 #[serde(rename_all = "camelCase")]
 pub enum FormatterMode {
     /// Disable the formatter.
-    #[default]
     Disable,
     /// Use `typstyle` formatter.
+    #[default]
     Typstyle,
     /// Use `typstfmt` formatter.
     Typstfmt,
@@ -1446,7 +1446,7 @@ mod tests {
     #[test]
     fn test_default_formatting_config() {
         let config = Config::default().formatter();
-        assert!(matches!(config.config, FormatterConfig::Disable));
+        assert!(matches!(config.config, FormatterConfig::Typstyle(_)));
         assert_eq!(config.position_encoding, PositionEncoding::Utf16);
     }
 
