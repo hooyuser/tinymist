@@ -1,7 +1,9 @@
 //! Http registry for tinymist.
 
-use std::path::Path;
+use std::io::{Cursor, ErrorKind, Read};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
 use reqwest::Certificate;
@@ -260,10 +262,31 @@ impl PackageStorage {
 
     /// Download a package over the network.
     ///
+    /// The package is first unpacked into a temporary directory adjacent to the
+    /// final destination and only moved into place after the unpack completed
+    /// successfully. This prevents interrupted downloads or process crashes
+    /// from leaving a partial package in the cache directory.
+    ///
     /// # Panics
     /// Panics if the package spec namespace isn't `preview`.
     pub fn download_package(&self, spec: &PackageSpec, package_dir: &Path) -> PackageResult<()> {
         assert!(spec.is_preview(), "only preview packages can be downloaded");
+
+        let base_dir = package_dir.parent().ok_or_else(|| {
+            PackageError::Other(Some(eco_format!(
+                "cannot determine package directory parent for {package_dir:?}"
+            )))
+        })?;
+        let tempdir = TemporaryPackageDir::create(base_dir.join(format!(
+            ".tmp-{}-{}",
+            spec.version,
+            temporary_dir_suffix(),
+        )))
+        .map_err(|err| {
+            PackageError::Other(Some(eco_format!(
+                "failed to create temporary package directory: {err}"
+            )))
+        })?;
 
         let url = format!(
             "{DEFAULT_REGISTRY}/preview/{}-{}.tar.gz",
@@ -271,8 +294,8 @@ impl PackageStorage {
         );
 
         self.notifier.lock().downloading(spec);
-        threaded_http(&url, self.cert_path.as_deref(), |resp| {
-            let reader = match resp.and_then(|r| r.error_for_status()) {
+        threaded_http(&url, self.cert_path.as_deref(), move |resp| {
+            let mut reader = match resp.and_then(|r| r.error_for_status()) {
                 Ok(response) => response,
                 Err(err) if matches!(err.status().map(|s| s.as_u16()), Some(404)) => {
                     return Err(PackageError::NotFound(spec.clone()));
@@ -280,16 +303,64 @@ impl PackageStorage {
                 Err(err) => return Err(PackageError::NetworkFailed(Some(eco_format!("{err}")))),
             };
 
-            let decompressed = flate2::read::GzDecoder::new(reader);
+            let mut data = Vec::new();
+            reader
+                .read_to_end(&mut data)
+                .map_err(|err| PackageError::NetworkFailed(Some(eco_format!("{err}"))))?;
+
+            let decompressed = flate2::read::GzDecoder::new(Cursor::new(data));
             tar::Archive::new(decompressed)
-                .unpack(package_dir)
-                .map_err(|err| {
-                    std::fs::remove_dir_all(package_dir).ok();
-                    PackageError::MalformedArchive(Some(eco_format!("{err}")))
-                })
+                .unpack(tempdir.path())
+                .map_err(|err| PackageError::MalformedArchive(Some(eco_format!("{err}"))))?;
+
+            tempdir.persist(package_dir)
         })
         .ok_or_else(|| PackageError::Other(Some(eco_format!("cannot spawn http thread"))))?
     }
+}
+
+struct TemporaryPackageDir(PathBuf);
+
+impl TemporaryPackageDir {
+    fn create(path: PathBuf) -> std::io::Result<Self> {
+        std::fs::create_dir_all(&path)?;
+        Ok(Self(path))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+
+    fn persist(&self, package_dir: &Path) -> PackageResult<()> {
+        match std::fs::rename(&self.0, package_dir) {
+            Ok(()) => Ok(()),
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    ErrorKind::AlreadyExists | ErrorKind::DirectoryNotEmpty
+                ) || package_dir.exists() =>
+            {
+                Ok(())
+            }
+            Err(err) => Err(PackageError::Other(Some(eco_format!(
+                "failed to move downloaded package directory: {err}"
+            )))),
+        }
+    }
+}
+
+impl Drop for TemporaryPackageDir {
+    fn drop(&mut self) {
+        std::fs::remove_dir_all(&self.0).ok();
+    }
+}
+
+fn temporary_dir_suffix() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("{}-{nanos:x}", std::process::id())
 }
 
 pub(crate) fn threaded_http<T: Send + Sync>(
@@ -319,4 +390,33 @@ pub(crate) fn threaded_http<T: Send + Sync>(
         .join()
         .ok()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn temporary_package_dir_persists_atomically() {
+        let root = std::env::temp_dir().join(format!(
+            "tinymist-package-http-test-{}",
+            temporary_dir_suffix()
+        ));
+        let base_dir = root.join("preview").join("example");
+        let final_dir = base_dir.join("0.1.0");
+
+        let tempdir = TemporaryPackageDir::create(base_dir.join(format!(
+            ".tmp-{}",
+            temporary_dir_suffix()
+        )))
+        .unwrap();
+        std::fs::write(tempdir.path().join("lib.typ"), "hello").unwrap();
+
+        tempdir.persist(&final_dir).unwrap();
+
+        assert!(final_dir.is_dir());
+        assert_eq!(std::fs::read_to_string(final_dir.join("lib.typ")).unwrap(), "hello");
+
+        std::fs::remove_dir_all(root).ok();
+    }
 }
