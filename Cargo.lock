@@ -6542,6 +6542,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinymist-docs-tool"
+version = "0.14.16"
+dependencies = [
+ "anyhow",
+ "cargo_metadata",
+ "clap",
+ "regex",
+ "serde",
+ "serde_json",
+ "ttf-parser",
+]
+
+[[package]]
 name = "tinymist-l10n"
 version = "0.14.6"
 dependencies = [
